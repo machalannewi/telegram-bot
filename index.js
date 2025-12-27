@@ -81,6 +81,66 @@ async function saveMonitoredGroups() {
 // Store group names for reference
 const groupNames = new Map();
 
+// Store last member counts for each group
+const lastMemberCounts = new Map();
+
+// Poll groups for new members
+async function pollForNewMembers() {
+  console.log("🔍 Polling groups for new members...");
+
+  for (const groupId of monitoredGroups) {
+    try {
+      // Skip if it's a duplicate ID format
+      if (groupId.includes("-100") || groupId.includes("-")) {
+        const plainId = groupId.replace("-100", "").replace("-", "");
+        if (monitoredGroups.has(plainId)) continue;
+      }
+
+      const chat = await client.getEntity(parseInt(groupId));
+
+      // For channels/supergroups, we can't easily get member count changes
+      // So we'll just continue listening to events
+      if (!lastMemberCounts.has(groupId)) {
+        lastMemberCounts.set(groupId, chat.participantsCount || 0);
+      }
+
+      const currentCount = chat.participantsCount || 0;
+      const lastCount = lastMemberCounts.get(groupId);
+
+      if (currentCount > lastCount) {
+        console.log(
+          `📈 Member count increased in ${chat.title}: ${lastCount} → ${currentCount}`
+        );
+        lastMemberCounts.set(groupId, currentCount);
+
+        // Try to get recent members
+        try {
+          const participants = await client.getParticipants(chat, {
+            limit: 10,
+          });
+          console.log(
+            `👥 Got ${participants.length} recent members from ${chat.title}`
+          );
+        } catch (e) {
+          console.log(`⚠️  Could not fetch participants from ${chat.title}`);
+        }
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    } catch (error) {
+      // Skip errors for individual groups
+      continue;
+    }
+  }
+}
+
+// Start polling every 2 minutes
+function startPolling() {
+  console.log("🔄 Starting member polling (every 2 minutes)...");
+  setInterval(pollForNewMembers, 2 * 60 * 1000);
+  pollForNewMembers(); // Run once immediately
+}
+
 // Initialize Telegram client with your account
 const apiId = parseInt(process.env.API_ID);
 const apiHash = process.env.API_HASH;
@@ -185,6 +245,9 @@ async function addAllGroupsToMonitoring() {
   // IMPORTANT: Register event handlers AFTER successful connection
   console.log("📡 Registering event handlers...");
   registerEventHandlers();
+
+  // Start polling for member changes
+  startPolling();
 
   // Start keep-alive
   console.log("Starting keep-alive service...");
