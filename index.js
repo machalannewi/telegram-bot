@@ -300,7 +300,7 @@ async function pollForNewMembers() {
 function startPolling() {
   console.log("🔄 Starting member polling (checks every 3 minutes)...");
   pollForNewMembers(); // Run once immediately
-  setInterval(pollForNewMembers, 3 * 60 * 1000); // 3 minutes
+  setInterval(pollForNewMembers, 1 * 60 * 1000); // 3 minutes
 }
 
 // Initialize Telegram client with your account
