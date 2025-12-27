@@ -84,47 +84,6 @@ const groupNames = new Map();
 // Store last seen members for each group
 const lastSeenMembers = new Map();
 
-// Fetch all members from a group (handles any size)
-async function getAllMembers(chat, groupId) {
-  try {
-    let allParticipants = [];
-    let offset = 0;
-    const limit = 200; // Fetch 200 at a time
-
-    while (true) {
-      try {
-        const participants = await client.getParticipants(chat, {
-          limit: limit,
-          offset: offset,
-        });
-
-        if (participants.length === 0) break;
-
-        allParticipants = allParticipants.concat(participants);
-        console.log(`  📥 Fetched ${allParticipants.length} members so far...`);
-
-        if (participants.length < limit) break; // No more members
-
-        offset += limit;
-
-        // Small delay to avoid rate limiting
-        await new Promise((resolve) => setTimeout(resolve, 500));
-      } catch (error) {
-        if (error.message.includes("CHAT_ADMIN_REQUIRED")) {
-          console.log(`  ⚠️  Need admin rights to fetch all members`);
-          return null;
-        }
-        break;
-      }
-    }
-
-    return allParticipants;
-  } catch (error) {
-    console.log(`  ❌ Error fetching members: ${error.message}`);
-    return null;
-  }
-}
-
 // Poll groups for new members
 async function pollForNewMembers() {
   console.log("🔍 Polling groups for new members...");
@@ -141,14 +100,9 @@ async function pollForNewMembers() {
       const groupName =
         chat.title || groupNames.get(groupId) || "Unknown Group";
 
-      console.log(
-        `\n📋 Checking: ${groupName} (${chat.participantsCount || "?"} members)`
-      );
-
-      // Try to get all participants
-      const participants = await getAllMembers(chat, groupId);
-
-      if (participants && participants.length > 0) {
+      // Try to get participants (only works for small groups)
+      try {
+        const participants = await client.getParticipants(chat, { limit: 100 });
         const currentMemberIds = new Set(
           participants.map((p) => p.id.toString())
         );
@@ -157,7 +111,7 @@ async function pollForNewMembers() {
         if (!lastSeenMembers.has(groupId)) {
           lastSeenMembers.set(groupId, currentMemberIds);
           console.log(
-            `  ✅ Initialized tracking with ${currentMemberIds.size} members`
+            `📝 Initialized tracking for ${groupName} with ${currentMemberIds.size} members`
           );
           continue;
         }
@@ -170,7 +124,9 @@ async function pollForNewMembers() {
         );
 
         if (newMemberIds.length > 0) {
-          console.log(`  🎉 Found ${newMemberIds.length} new member(s)!`);
+          console.log(
+            `🎉 Found ${newMemberIds.length} new member(s) in ${groupName}!`
+          );
 
           // Get details for each new member and send notification
           for (const memberId of newMemberIds) {
@@ -213,14 +169,14 @@ async function pollForNewMembers() {
               await client.sendMessage("me", { message: notifMessage });
 
               console.log(
-                `  ${colors.green}✅ Notified: ${username}${colors.reset}`
+                `${colors.green}✅ Notified about new member: ${username} in ${groupName}${colors.reset}`
               );
 
               // Small delay between notifications
               await new Promise((resolve) => setTimeout(resolve, 500));
             } catch (error) {
               console.error(
-                `  ❌ Error processing member ${memberId}:`,
+                `❌ Error processing member ${memberId}:`,
                 error.message
               );
             }
@@ -228,30 +184,20 @@ async function pollForNewMembers() {
 
           // Update tracking
           lastSeenMembers.set(groupId, currentMemberIds);
-        } else {
-          console.log(`  ℹ️  No new members`);
         }
-      } else {
-        // Fallback for groups where we can't fetch members (restricted channels, etc.)
-        console.log(
-          `  ⚠️  Cannot fetch member list - using count-based tracking`
-        );
-
+      } catch (error) {
+        // If we can't get participants (large groups/channels), fall back to count-based detection
         if (!lastMemberCounts.has(groupId)) {
           lastMemberCounts.set(groupId, chat.participantsCount || 0);
-          console.log(
-            `  ✅ Initialized count tracking: ${
-              chat.participantsCount || 0
-            } members`
-          );
-          continue;
         }
 
         const currentCount = chat.participantsCount || 0;
         const lastCount = lastMemberCounts.get(groupId);
 
         if (currentCount > lastCount) {
-          console.log(`  📈 Count increased: ${lastCount} → ${currentCount}`);
+          console.log(
+            `📈 Member count increased in ${groupName}: ${lastCount} → ${currentCount}`
+          );
           lastMemberCounts.set(groupId, currentCount);
 
           // Send a generic notification
@@ -277,30 +223,28 @@ async function pollForNewMembers() {
               currentCount - lastCount
             })\n` +
             `🏠 **Group:** ${groupName}\n\n` +
-            `⚠️ Cannot fetch individual member details for this group (requires admin rights or restricted channel)`;
+            `⚠️ Cannot fetch individual member details for this group (too large or restricted)`;
 
           await client.sendMessage("me", { message: notifMessage });
-        } else {
-          console.log(`  ℹ️  No count change`);
         }
       }
 
       // Delay between groups to avoid rate limiting
-      await new Promise((resolve) => setTimeout(resolve, 1000));
+      await new Promise((resolve) => setTimeout(resolve, 300));
     } catch (error) {
       console.error(`❌ Error checking group ${groupId}:`, error.message);
       continue;
     }
   }
 
-  console.log("\n✅ Polling cycle complete\n");
+  console.log("✅ Polling cycle complete\n");
 }
 
-// Start polling every 3 minutes (increased due to more API calls)
+// Start polling every 2 minutes
 function startPolling() {
-  console.log("🔄 Starting member polling (checks every 3 minutes)...");
+  console.log("🔄 Starting member polling (checks every 2 minutes)...");
   pollForNewMembers(); // Run once immediately
-  setInterval(pollForNewMembers, 1 * 60 * 1000); // 3 minutes
+  setInterval(pollForNewMembers, 2 * 60 * 1000);
 }
 
 // Initialize Telegram client with your account
