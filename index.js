@@ -1,7 +1,6 @@
 const { TelegramClient } = require("telegram");
 const { StringSession } = require("telegram/sessions");
 const { NewMessage } = require("telegram/events");
-const input = require("input");
 const express = require("express");
 const fs = require("fs").promises;
 const path = require("path");
@@ -149,30 +148,35 @@ async function addAllGroupsToMonitoring() {
 (async () => {
   console.log("Starting Telegram user client...");
 
-  await client.start({
-    phoneNumber: async () =>
-      await input.text("Please enter your phone number: "),
-    password: async () => await input.text("Please enter your password: "),
-    phoneCode: async () =>
-      await input.text("Please enter the code you received: "),
-    onError: (err) => console.log(err),
-  });
+  // Check if session string exists
+  if (!stringSession.sessionString) {
+    console.error("❌ ERROR: SESSION_STRING is missing in .env file!");
+    console.log("\n📝 To get your session string:");
+    console.log("1. Run this locally ONCE with the login-telegram.js script");
+    console.log("2. Copy the SESSION_STRING it generates");
+    console.log("3. Add it to your .env file on Render\n");
+    process.exit(1);
+  }
 
-  console.log(
-    `${colors.green}Logged in as ${colors.bright}${
-      (await client.getMe()).firstName
-    }${colors.reset}`
-  );
-
-  // Save session string for future use
-  console.log("\n⚠️  IMPORTANT: Save this session string to your .env file:");
-  console.log(`SESSION_STRING=${client.session.save()}\n`);
+  try {
+    await client.connect();
+    console.log(
+      `${colors.green}Logged in as ${colors.bright}${
+        (await client.getMe()).firstName
+      }${colors.reset}`
+    );
+  } catch (error) {
+    console.error("❌ Failed to connect:", error.message);
+    console.log("\n⚠️  Your SESSION_STRING may be invalid or expired.");
+    console.log("Run login-telegram.js locally to generate a new one.\n");
+    process.exit(1);
+  }
 
   await loadMonitoredGroups();
 
   // Wait for Telegram to sync
-  console.log("Waiting 3 seconds for Telegram to sync...");
-  await new Promise((resolve) => setTimeout(resolve, 3000));
+  console.log("Waiting 5 seconds for Telegram to sync...");
+  await new Promise((resolve) => setTimeout(resolve, 5000));
 
   // Add all groups to monitoring
   await addAllGroupsToMonitoring();
@@ -182,6 +186,9 @@ async function addAllGroupsToMonitoring() {
   keepAlive();
 
   console.log("\n✅ Bot is now running and monitoring for new members!\n");
+  console.log(
+    "💡 When users join monitored groups, you'll get notifications in Saved Messages\n"
+  );
 })();
 
 // Listen for ALL messages to catch service messages about new members
