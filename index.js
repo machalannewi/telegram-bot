@@ -81,8 +81,8 @@ async function saveMonitoredGroups() {
 // Store group names for reference
 const groupNames = new Map();
 
-// Store last member counts for each group
-const lastMemberCounts = new Map();
+// Store last seen members for each group
+const lastSeenMembers = new Map();
 
 // Poll groups for new members
 async function pollForNewMembers() {
@@ -90,55 +90,161 @@ async function pollForNewMembers() {
 
   for (const groupId of monitoredGroups) {
     try {
-      // Skip if it's a duplicate ID format
+      // Skip duplicate ID formats
       if (groupId.includes("-100") || groupId.includes("-")) {
         const plainId = groupId.replace("-100", "").replace("-", "");
-        if (monitoredGroups.has(plainId)) continue;
+        if (monitoredGroups.has(plainId) && groupId !== plainId) continue;
       }
 
       const chat = await client.getEntity(parseInt(groupId));
+      const groupName =
+        chat.title || groupNames.get(groupId) || "Unknown Group";
 
-      // For channels/supergroups, we can't easily get member count changes
-      // So we'll just continue listening to events
-      if (!lastMemberCounts.has(groupId)) {
-        lastMemberCounts.set(groupId, chat.participantsCount || 0);
-      }
-
-      const currentCount = chat.participantsCount || 0;
-      const lastCount = lastMemberCounts.get(groupId);
-
-      if (currentCount > lastCount) {
-        console.log(
-          `📈 Member count increased in ${chat.title}: ${lastCount} → ${currentCount}`
+      // Try to get participants (only works for small groups)
+      try {
+        const participants = await client.getParticipants(chat, { limit: 100 });
+        const currentMemberIds = new Set(
+          participants.map((p) => p.id.toString())
         );
-        lastMemberCounts.set(groupId, currentCount);
 
-        // Try to get recent members
-        try {
-          const participants = await client.getParticipants(chat, {
-            limit: 10,
-          });
+        // Initialize if first time
+        if (!lastSeenMembers.has(groupId)) {
+          lastSeenMembers.set(groupId, currentMemberIds);
           console.log(
-            `👥 Got ${participants.length} recent members from ${chat.title}`
+            `📝 Initialized tracking for ${groupName} with ${currentMemberIds.size} members`
           );
-        } catch (e) {
-          console.log(`⚠️  Could not fetch participants from ${chat.title}`);
+          continue;
+        }
+
+        const previousMemberIds = lastSeenMembers.get(groupId);
+
+        // Find new members
+        const newMemberIds = [...currentMemberIds].filter(
+          (id) => !previousMemberIds.has(id)
+        );
+
+        if (newMemberIds.length > 0) {
+          console.log(
+            `🎉 Found ${newMemberIds.length} new member(s) in ${groupName}!`
+          );
+
+          // Get details for each new member and send notification
+          for (const memberId of newMemberIds) {
+            try {
+              const member = participants.find(
+                (p) => p.id.toString() === memberId
+              );
+              if (!member) continue;
+
+              const username = member.username || member.firstName || "Unknown";
+              const fullName = [member.firstName, member.lastName]
+                .filter(Boolean)
+                .join(" ");
+
+              // Get current date and time
+              const now = new Date();
+              const date = now.toLocaleDateString("en-US", {
+                year: "numeric",
+                month: "long",
+                day: "numeric",
+                timeZone: "Africa/Lagos",
+              });
+              const time = now.toLocaleTimeString("en-US", {
+                hour: "2-digit",
+                minute: "2-digit",
+                second: "2-digit",
+                timeZone: "Africa/Lagos",
+              });
+
+              // Send notification
+              const notifMessage =
+                `🎉 **New Member Detected!**\n\n` +
+                `📆 **Date:** ${date}\n` +
+                `🕐 **Time:** ${time}\n` +
+                `👤 **Username:** @${username}\n` +
+                `📝 **Full Name:** ${fullName}\n` +
+                `🆔 **User ID:** \`${memberId}\`\n` +
+                `🏠 **Group:** ${groupName}`;
+
+              await client.sendMessage("me", { message: notifMessage });
+
+              console.log(
+                `${colors.green}✅ Notified about new member: ${username} in ${groupName}${colors.reset}`
+              );
+
+              // Small delay between notifications
+              await new Promise((resolve) => setTimeout(resolve, 500));
+            } catch (error) {
+              console.error(
+                `❌ Error processing member ${memberId}:`,
+                error.message
+              );
+            }
+          }
+
+          // Update tracking
+          lastSeenMembers.set(groupId, currentMemberIds);
+        }
+      } catch (error) {
+        // If we can't get participants (large groups/channels), fall back to count-based detection
+        if (!lastMemberCounts.has(groupId)) {
+          lastMemberCounts.set(groupId, chat.participantsCount || 0);
+        }
+
+        const currentCount = chat.participantsCount || 0;
+        const lastCount = lastMemberCounts.get(groupId);
+
+        if (currentCount > lastCount) {
+          console.log(
+            `📈 Member count increased in ${groupName}: ${lastCount} → ${currentCount}`
+          );
+          lastMemberCounts.set(groupId, currentCount);
+
+          // Send a generic notification
+          const now = new Date();
+          const date = now.toLocaleDateString("en-US", {
+            year: "numeric",
+            month: "long",
+            day: "numeric",
+            timeZone: "Africa/Lagos",
+          });
+          const time = now.toLocaleTimeString("en-US", {
+            hour: "2-digit",
+            minute: "2-digit",
+            second: "2-digit",
+            timeZone: "Africa/Lagos",
+          });
+
+          const notifMessage =
+            `📊 **Member Count Changed!**\n\n` +
+            `📆 **Date:** ${date}\n` +
+            `🕐 **Time:** ${time}\n` +
+            `📈 **Change:** ${lastCount} → ${currentCount} (+${
+              currentCount - lastCount
+            })\n` +
+            `🏠 **Group:** ${groupName}\n\n` +
+            `⚠️ Cannot fetch individual member details for this group (too large or restricted)`;
+
+          await client.sendMessage("me", { message: notifMessage });
         }
       }
 
-      await new Promise((resolve) => setTimeout(resolve, 200));
+      // Delay between groups to avoid rate limiting
+      await new Promise((resolve) => setTimeout(resolve, 300));
     } catch (error) {
-      // Skip errors for individual groups
+      console.error(`❌ Error checking group ${groupId}:`, error.message);
       continue;
     }
   }
+
+  console.log("✅ Polling cycle complete\n");
 }
 
 // Start polling every 2 minutes
 function startPolling() {
-  console.log("🔄 Starting member polling (every 2 minutes)...");
-  setInterval(pollForNewMembers, 2 * 60 * 1000);
+  console.log("🔄 Starting member polling (checks every 2 minutes)...");
   pollForNewMembers(); // Run once immediately
+  setInterval(pollForNewMembers, 2 * 60 * 1000);
 }
 
 // Initialize Telegram client with your account
